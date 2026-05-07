@@ -55,7 +55,12 @@ app.use(cookieParser());
 // If using wildcard origin, cookies will be blocked by browser
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: [
+      process.env.FRONTEND_URL || "http://localhost:3000",
+      "https://sudbridge-kids-client.vercel.app",
+      "https://studbridge.com",
+      "https://www.studbridge.com",
+    ],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
