@@ -2,18 +2,33 @@ const jwt = require("jsonwebtoken");
 
 /**
  * JWT Verification Middleware
- * Extracts and verifies JWT token from HttpOnly cookie (req.cookies.token).
+ * Extracts and verifies JWT token from Authorization header OR HttpOnly cookie.
  * Attaches decoded payload to req.user if valid.
- * Returns 401 if token is missing, 403 if invalid or expired.
  */
 const authMiddleware = (req, res, next) => {
   try {
-    // Extract token from HttpOnly cookie
-    const token = req.cookies.token;
+    let token;
 
-    if (!token) {
-      return res.status(401).json({ error: "Authentication required" });
+    // 1. Check for Authorization header (Bearer token) - This is what your Next.js app uses
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
     }
+    // 2. Fallback to checking the cookie
+    else if (req.cookies && req.cookies.token) {
+      token = req.cookies.token;
+    }
+
+    // 3. If no token found in either place, reject
+    if (!token) {
+      return res
+        .status(401)
+        .json({ error: "Authentication required. Please provide a token." });
+    }
+
+    console.log("=== AUTH DEBUGGING ===");
+    console.log("Token received:", token);
+    console.log("JWT Secret exists:", !!process.env.JWT_SECRET);
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);

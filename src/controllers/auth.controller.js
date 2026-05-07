@@ -46,6 +46,7 @@ const login = async (req, res, next) => {
     // Return success response with user data
     res.status(200).json({
       message: "Login successful",
+      token,
       user,
       passwordResetRequired,
     });
