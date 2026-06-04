@@ -58,6 +58,8 @@ app.use(
   cors({
     origin: [
       process.env.FRONTEND_URL || "http://localhost:3000",
+      "http://localhost:3000",
+      "http://localhost:3001",
       "https://sudbridge-kids-client.vercel.app",
       "https://studbridge.com",
       "https://www.studbridge.com",
