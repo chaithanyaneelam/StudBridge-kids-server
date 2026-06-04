@@ -4,7 +4,7 @@ const { z } = require("zod");
  * Schema for recording when student opens a topic
  */
 const topicOpenSchema = z.object({
-  topic_id: z
+  topic_id: z.coerce
     .number()
     .int("Topic ID must be an integer")
     .positive("Topic ID must be positive"),
@@ -14,15 +14,15 @@ const topicOpenSchema = z.object({
  * Schema for recording practice quiz results
  */
 const practiceResultSchema = z.object({
-  topic_id: z
+  topic_id: z.coerce
     .number()
     .int("Topic ID must be an integer")
     .positive("Topic ID must be positive"),
-  ans_correct: z
+  ans_correct: z.coerce
     .number()
     .int("ans_correct must be an integer")
     .nonnegative("ans_correct must be non-negative"),
-  ans_wrong: z
+  ans_wrong: z.coerce
     .number()
     .int("ans_wrong must be an integer")
     .nonnegative("ans_wrong must be non-negative"),
