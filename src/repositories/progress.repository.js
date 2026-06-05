@@ -37,7 +37,7 @@ const savePracticeResult = async (
   ans_wrong,
 ) => {
   const query = `
-    INSERT INTO practice_results (user_id, topic_id, ans_correct, ans_wrong, created_at)
+    INSERT INTO practice_results (user_id, topic_id, ans_correct, ans_wrong, played_at)
     VALUES ($1, $2, $3, $4, NOW())
     RETURNING *;
   `;
