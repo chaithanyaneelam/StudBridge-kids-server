@@ -11,6 +11,7 @@ const teacherController = require("../controllers/teacher.controller");
  * GET /my-students      ← teacher sees their section students list
  * GET /section-progress ← teacher sees full progress of their section
  * GET /weak-students    ← teacher sees students struggling in topics
+ * GET /topic-accuracy   ← teacher sees per-topic accuracy of their section
  */
 const router = express.Router();
 
@@ -26,6 +27,7 @@ router.get(
   teacherController.getSectionProgress,
 );
 router.get("/weak-students", apiLimiter, teacherController.getWeakStudents);
+router.get("/topic-accuracy", apiLimiter, teacherController.getTopicAccuracy);
 
 // Profile management
 router.get("/profile", apiLimiter, teacherController.getProfile);

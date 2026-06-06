@@ -83,9 +83,28 @@ const getProfile = async (req, res, next) => {
   }
 };
 
+/**
+ * Get topic accuracy - teacher sees all students in their section with
+ * topic accuracy grouped by chapter
+ * Gets teacher_id from req.user.id, calls service, returns grouped result
+ */
+const getTopicAccuracy = async (req, res, next) => {
+  try {
+    const teacher_id = req.user.id;
+    const data = await teacherService.getSectionTopicAccuracy(teacher_id);
+    res.status(200).json({
+      data,
+      count: data.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getMyStudents,
   getSectionProgress,
   getWeakStudents,
   getProfile,
+  getTopicAccuracy,
 };

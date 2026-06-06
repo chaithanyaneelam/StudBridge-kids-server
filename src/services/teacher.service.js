@@ -109,9 +109,88 @@ const getTeacherProfile = async (teacher_id) => {
   return profile;
 };
 
+/**
+ * Get topic accuracy grouped by student then chapter then topic
+ * Fetches teacher assignment first, then queries practice_results
+ * @param {number} teacher_id - Teacher ID
+ * @returns {Promise<Array>} Students with nested chapters and topic accuracy
+ */
+const getSectionTopicAccuracy = async (teacher_id) => {
+  // Get teacher's assigned class and section from class_teacher_assignments
+  const assignment = await pool.query(
+    `SELECT school_id, class_id, section
+     FROM class_teacher_assignments
+     WHERE teacher_id = $1 LIMIT 1`,
+    [teacher_id],
+  );
+
+  if (!assignment.rows[0]) {
+    return [];
+  }
+
+  const { school_id, class_id, section } = assignment.rows[0];
+  const rows = await teacherRepository.getSectionTopicAccuracy(
+    school_id,
+    class_id,
+    section,
+  );
+
+  if (rows.length === 0) return [];
+
+  // Group flat rows into nested structure:
+  // { student_id, student_name, reg_number, chapters: [{ chapter_id, chapter_name, topics: [...] }] }
+  const studentMap = {};
+
+  rows.forEach((row) => {
+    const sid = row.student_id;
+
+    if (!studentMap[sid]) {
+      studentMap[sid] = {
+        student_id: sid,
+        student_name: row.student_name,
+        reg_number: row.school_reg_number,
+        chapters: {},
+      };
+    }
+
+    const cid = row.chapter_id;
+    if (!studentMap[sid].chapters[cid]) {
+      studentMap[sid].chapters[cid] = {
+        chapter_id: cid,
+        chapter_name: row.chapter_name,
+        chapter_order: row.chapter_order,
+        topics: [],
+      };
+    }
+
+    studentMap[sid].chapters[cid].topics.push({
+      topic_id: row.topic_id,
+      topic_name: row.topic_name,
+      topic_order: row.topic_order,
+      total_correct: parseInt(row.total_correct) || 0,
+      total_wrong: parseInt(row.total_wrong) || 0,
+      total_attempts: parseInt(row.total_attempts) || 0,
+      accuracy_percent:
+        row.accuracy_percent !== null ? parseFloat(row.accuracy_percent) : null,
+    });
+  });
+
+  // Convert nested maps to sorted arrays
+  return Object.values(studentMap).map((student) => ({
+    ...student,
+    chapters: Object.values(student.chapters)
+      .sort((a, b) => a.chapter_order - b.chapter_order)
+      .map((chapter) => ({
+        ...chapter,
+        topics: chapter.topics.sort((a, b) => a.topic_order - b.topic_order),
+      })),
+  }));
+};
+
 module.exports = {
   getMyStudents,
   getSectionProgress,
   getWeakStudents,
   getTeacherProfile,
+  getSectionTopicAccuracy,
 };
