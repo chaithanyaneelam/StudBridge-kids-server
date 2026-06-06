@@ -45,8 +45,22 @@ const joinRoomSchema = z.object({
  */
 const submitAttemptSchema = z.object({
   room_code: z.string().min(1, "Room code is required"),
-  score: z.number().min(0, "Score cannot be negative"),
-  total_marks: z.number().min(1, "Total marks must be at least 1"),
+  answers: z
+    .array(
+      z.object({
+        question_id: z.coerce.number().int().positive(),
+        selected_index: z.number().int().min(0).max(3).nullable().optional(),
+        selected_letter: z
+          .string()
+          .toLowerCase()
+          .pipe(z.enum(["a", "b", "c", "d"]))
+          .nullable()
+          .optional(),
+      }),
+    )
+    .optional(),
+  score: z.number().min(0).optional(),
+  total_marks: z.number().min(1).optional(),
 });
 
 module.exports = {

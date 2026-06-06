@@ -20,6 +20,29 @@ const createPlatformQuiz = async (
   topic_id,
   question_limit,
 ) => {
+  let questionCount;
+  if (topic_id) {
+    const topicQuestions = await pool.query(
+      "SELECT COUNT(*) as count FROM question_bank WHERE topic_id = $1",
+      [topic_id],
+    );
+    questionCount = parseInt(topicQuestions.rows[0].count, 10);
+  } else {
+    const chapterQuestions = await pool.query(
+      "SELECT COUNT(*) as count FROM question_bank qb JOIN topics t ON qb.topic_id = t.id WHERE t.chapter_id = $1",
+      [chapter_id],
+    );
+    questionCount = parseInt(chapterQuestions.rows[0].count, 10);
+  }
+
+  if (questionCount < 5) {
+    const error = new Error(
+      "Not enough questions in bank for this topic. Please add more questions first.",
+    );
+    error.status = 400;
+    throw error;
+  }
+
   // Create room with quiz_type='platform', school_id=null
   const room = await quizRepository.createRoom(
     admin_id,
@@ -32,7 +55,7 @@ const createPlatformQuiz = async (
   );
 
   // Copy questions from bank
-  const questionCount = await quizRepository.copyQuestionsFromBank(
+  const copiedCount = await quizRepository.copyQuestionsFromBank(
     room.id,
     topic_id,
     chapter_id,
@@ -41,7 +64,7 @@ const createPlatformQuiz = async (
 
   return {
     ...room,
-    question_count: questionCount,
+    question_count: copiedCount,
   };
 };
 
@@ -117,12 +140,18 @@ const createClassQuiz = async (
 
 /**
  * Get available quizzes for a student
+ * Completed quizzes are excluded so they are not shown again on the dashboard.
  * @param {number} class_id - Student's class ID
  * @param {number} school_id - Student's school ID
+ * @param {number} user_id - Student's user ID
  * @returns {Promise<Array>} Available quizzes
  */
-const getAvailableQuizzes = async (class_id, school_id) => {
-  const quizzes = await quizRepository.getAvailableQuizzes(class_id, school_id);
+const getAvailableQuizzes = async (class_id, school_id, user_id) => {
+  const quizzes = await quizRepository.getAvailableQuizzes(
+    class_id,
+    school_id,
+    user_id,
+  );
   return quizzes;
 };
 
@@ -207,14 +236,38 @@ const startRoom = async (room_id, teacher_id) => {
 };
 
 /**
- * Submit quiz attempt
+ * Normalize an answer to a lowercase letter (a-d) for comparison
+ * Accepts a stored letter ('A'-'D' or 'a'-'d'), a numeric index (0-3),
+ * or a numeric string. Returns null if it cannot be normalized.
+ * @param {string|number|null|undefined} value
+ * @returns {string|null} 'a' | 'b' | 'c' | 'd' | null
+ */
+const normalizeToLetter = (value) => {
+  if (value === null || value === undefined) return null;
+
+  // Numeric index (0-3) or numeric string ("0"-"3")
+  if (typeof value === "number" || /^[0-9]+$/.test(String(value).trim())) {
+    const idx = parseInt(value, 10);
+    if (idx >= 0 && idx <= 3) return String.fromCharCode(97 + idx);
+    return null;
+  }
+
+  // Letter form ('A'-'D' / 'a'-'d')
+  const letter = String(value).trim().toLowerCase();
+  if (["a", "b", "c", "d"].includes(letter)) return letter;
+  return null;
+};
+
+/**
+ * Submit quiz attempt — graded server-side
+ * The client no longer computes the score; the backend compares the student's
+ * answers against the quiz answer key and returns the correct answers for review.
  * @param {number} user_id - Student user ID
  * @param {string} room_code - Room code
- * @param {number} score - Score obtained
- * @param {number} total_marks - Total marks
- * @returns {Promise<Object>} Score and student's rank
+ * @param {Array} answers - [{ question_id, selected_index?, selected_letter? }]
+ * @returns {Promise<Object>} Computed score, total marks, rank, correct answers
  */
-const submitAttempt = async (user_id, room_code, score, total_marks) => {
+const submitAttempt = async (user_id, room_code, answers = []) => {
   // Get room by code
   const room = await quizRepository.getRoomByCode(room_code);
 
@@ -231,12 +284,36 @@ const submitAttempt = async (user_id, room_code, score, total_marks) => {
     throw error;
   }
 
-  // Submit attempt
+  // Fetch the answer key (server-side source of truth)
+  const answerKey = await quizRepository.getQuizAnswerKey(room.id);
+  const totalMarks = answerKey.length;
+
+  // Map student's answers by question_id → normalized letter
+  const submitted = Array.isArray(answers) ? answers : [];
+  const answerByQuestion = new Map();
+  submitted.forEach((a) => {
+    const normalized =
+      normalizeToLetter(a.selected_letter) ??
+      normalizeToLetter(a.selected_index);
+    answerByQuestion.set(Number(a.question_id), normalized);
+  });
+
+  // Grade: count correct; unanswered or mismatched = wrong
+  let computedScore = 0;
+  answerKey.forEach((q) => {
+    const correctLetter = normalizeToLetter(q.correct_ans);
+    const studentLetter = answerByQuestion.get(Number(q.id)) ?? null;
+    if (correctLetter !== null && studentLetter === correctLetter) {
+      computedScore += 1;
+    }
+  });
+
+  // Submit the server-computed attempt
   const attempt = await quizRepository.submitAttempt(
     user_id,
     room.id,
-    score,
-    total_marks,
+    computedScore,
+    totalMarks,
   );
 
   // Get results to find rank
@@ -247,6 +324,16 @@ const submitAttempt = async (user_id, room_code, score, total_marks) => {
     score: attempt.score,
     total_marks: attempt.total_marks,
     rank: userResult?.rank ?? null,
+    correct_answers: answerKey.map((q) => {
+      const correctLetter = normalizeToLetter(q.correct_ans);
+      return {
+        question_id: q.id,
+        correct_ans: q.correct_ans, // as stored (e.g. "A")
+        correct_letter: correctLetter,
+        correct_index:
+          correctLetter !== null ? correctLetter.charCodeAt(0) - 97 : null,
+      };
+    }),
     results,
   };
 };

@@ -83,14 +83,12 @@ const createChapter = async (req, res, next) => {
  */
 const getChapters = async (req, res, next) => {
   try {
-    // Extract query parameters
     const class_id = parseInt(req.query.class_id, 10);
     const board_id = parseInt(req.query.board_id, 10);
 
-    // Validate parameters are valid numbers
-    if (!Number.isInteger(class_id) || !Number.isInteger(board_id)) {
+    if (isNaN(class_id) || isNaN(board_id)) {
       return res.status(400).json({
-        error: "class_id and board_id must be valid integers",
+        error: "class_id and board_id are required query parameters",
       });
     }
 
@@ -140,10 +138,9 @@ const getTopics = async (req, res, next) => {
     // Extract query parameter
     const chapter_id = parseInt(req.query.chapter_id, 10);
 
-    // Validate parameter is valid number
-    if (!Number.isInteger(chapter_id)) {
+    if (isNaN(chapter_id)) {
       return res.status(400).json({
-        error: "chapter_id must be a valid integer",
+        error: "chapter_id is a required query parameter",
       });
     }
 

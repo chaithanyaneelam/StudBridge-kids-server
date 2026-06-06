@@ -32,12 +32,27 @@ const createChapter = async (class_id, board_id, name, order_index) => {
  */
 const getChaptersByClassAndBoard = async (class_id, board_id) => {
   const query = `
-    SELECT * FROM chapters
+    SELECT id, name, class_id, board_id, order_index
+    FROM chapters
     WHERE class_id = $1 AND board_id = $2
     ORDER BY order_index ASC;
   `;
 
   const result = await pool.query(query, [class_id, board_id]);
+
+  // If no chapters for this board, return all chapters for the class
+  // (platform quiz UI may request a default board_id that has no content)
+  if (result.rows.length === 0) {
+    const fallbackQuery = `
+      SELECT id, name, class_id, board_id, order_index
+      FROM chapters
+      WHERE class_id = $1
+      ORDER BY order_index ASC;
+    `;
+    const fallback = await pool.query(fallbackQuery, [class_id]);
+    return fallback.rows;
+  }
+
   return result.rows;
 };
 

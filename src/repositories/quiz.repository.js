@@ -66,6 +66,28 @@ const createRoom = async (
  * @returns {Promise<number>} Count of questions copied
  */
 const copyQuestionsFromBank = async (quiz_id, topic_id, chapter_id, limit) => {
+  let countQuery;
+  let countParams;
+
+  if (topic_id) {
+    countQuery =
+      "SELECT COUNT(*) as count FROM question_bank WHERE topic_id = $1";
+    countParams = [topic_id];
+  } else {
+    countQuery = `
+      SELECT COUNT(*) as count FROM question_bank qb
+      JOIN topics t ON qb.topic_id = t.id
+      WHERE t.chapter_id = $1
+    `;
+    countParams = [chapter_id];
+  }
+
+  const countResult = await pool.query(countQuery, countParams);
+  const availableCount = parseInt(countResult.rows[0].count, 10);
+  if (availableCount === 0) {
+    return 0;
+  }
+
   let questions = [];
 
   if (topic_id) {
@@ -160,6 +182,20 @@ const getQuizQuestions = async (quiz_id) => {
 
   const result = await pool.query(query, [quiz_id]);
   return result.rows;
+};
+
+/**
+ * Get the answer key for a quiz (correct answers only)
+ * Used internally for server-side grading — never sent before submission
+ * @param {number} quiz_id - Quiz room ID
+ * @returns {Promise<Array>} Array of { id, correct_ans }
+ */
+const getQuizAnswerKey = async (quiz_id) => {
+  const result = await pool.query(
+    `SELECT id, correct_ans FROM quiz_questions WHERE quiz_id = $1`,
+    [quiz_id],
+  );
+  return result.rows; // [{ id, correct_ans }]
 };
 
 /**
@@ -264,24 +300,30 @@ const getRoomResults = async (quiz_id) => {
 
 /**
  * Get available quizzes for a student
- * Include platform quizzes (global) and class quizzes (school-specific)
+ * Include platform quizzes (global) and class quizzes (school-specific).
+ * Excludes quizzes the student has already attempted so a completed quiz
+ * is never sent back to the frontend.
  * @param {number} class_id - Student's class ID
  * @param {number} school_id - Student's school ID
+ * @param {number} user_id - Student's user ID (to exclude completed quizzes)
  * @returns {Promise<Array>} Available quizzes
  */
-const getAvailableQuizzes = async (class_id, school_id) => {
+const getAvailableQuizzes = async (class_id, school_id, user_id) => {
   const query = `
-    SELECT * FROM quiz_rooms
-    WHERE class_id = $1
+    SELECT qr.* FROM quiz_rooms qr
+    LEFT JOIN quiz_attempts qa
+      ON qa.quiz_id = qr.id AND qa.user_id = $3
+    WHERE qr.class_id = $1
+      AND qa.id IS NULL
       AND (
-        (quiz_type = 'platform' AND status != 'ended' AND expires_at > NOW())
+        (qr.quiz_type = 'platform' AND qr.status != 'ended' AND qr.expires_at > NOW())
         OR
-        (quiz_type = 'class' AND school_id = $2 AND status != 'ended' AND expires_at > NOW())
+        (qr.quiz_type = 'class' AND qr.school_id = $2 AND qr.status != 'ended' AND qr.expires_at > NOW())
       )
-    ORDER BY starts_at ASC;
+    ORDER BY qr.starts_at ASC;
   `;
 
-  const result = await pool.query(query, [class_id, school_id]);
+  const result = await pool.query(query, [class_id, school_id, user_id]);
   return result.rows;
 };
 
@@ -293,10 +335,16 @@ const getAvailableQuizzes = async (class_id, school_id) => {
 const getStudentQuizHistory = async (user_id) => {
   const query = `
     SELECT 
+      qa.quiz_id,
       qr.room_code,
       qr.quiz_type,
       qa.score,
       qa.total_marks,
+      CASE
+        WHEN qa.total_marks > 0
+        THEN ROUND((qa.score::numeric / qa.total_marks) * 100, 1)
+        ELSE 0
+      END AS percentage,
       qa.completed_at
     FROM quiz_attempts qa
     JOIN quiz_rooms qr ON qa.quiz_id = qr.id
@@ -313,6 +361,7 @@ module.exports = {
   createRoom,
   copyQuestionsFromBank,
   getQuizQuestions,
+  getQuizAnswerKey,
   getRoomByCode,
   getRoomById,
   updateRoomStatus,

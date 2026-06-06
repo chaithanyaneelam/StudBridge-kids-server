@@ -16,6 +16,7 @@ const quizController = require("../controllers/quiz.controller");
  * PUT /end/:room_id         ← teacher ends quiz
  * GET /results/:room_code   ← anyone sees results
  * GET /my-history           ← student sees their history
+ * GET /history              ← alias: student sees their quiz history
  */
 const router = express.Router();
 
@@ -49,5 +50,6 @@ router.get("/results/:room_code", quizController.getRoomResults);
 
 // Student views their quiz history
 router.get("/my-history", quizController.getMyQuizHistory);
+router.get("/history", quizController.getMyQuizHistory);
 
 module.exports = router;

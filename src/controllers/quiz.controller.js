@@ -87,9 +87,14 @@ const getAvailableQuizzes = async (req, res, next) => {
     // Get class_id and school_id from authenticated user
     const class_id = req.user.class_id;
     const school_id = req.user.school_id;
+    const user_id = req.user.id;
 
-    // Call service to fetch available quizzes
-    const quizzes = await quizService.getAvailableQuizzes(class_id, school_id);
+    // Call service to fetch available quizzes (excludes already-completed ones)
+    const quizzes = await quizService.getAvailableQuizzes(
+      class_id,
+      school_id,
+      user_id,
+    );
 
     // Return quizzes
     res.status(200).json({
@@ -177,12 +182,11 @@ const submitAttempt = async (req, res, next) => {
     // Get user_id from authenticated user
     const user_id = req.user.id;
 
-    // Call service to submit attempt
+    // Call service to submit attempt — backend grades against the answer key
     const result = await quizService.submitAttempt(
       user_id,
       validatedData.room_code,
-      validatedData.score,
-      validatedData.total_marks,
+      validatedData.answers,
     );
 
     // Return score and rank
