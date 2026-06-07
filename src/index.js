@@ -16,6 +16,7 @@ const questionbankRoutes = require("./routes/questionbank.routes");
 const quizRoutes = require("./routes/quiz.routes");
 const reportRoutes = require("./routes/report.routes");
 const demoRoutes = require("./routes/demo.routes");
+const paymentRoutes = require("./routes/payment.routes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -91,6 +92,7 @@ app.use("/api/questions", questionbankRoutes);
 app.use("/api/quiz", quizRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/demo", demoRoutes);
+app.use("/api/payment", paymentRoutes);
 
 // Global Error Handler: Must be last
 app.use(errorHandler);

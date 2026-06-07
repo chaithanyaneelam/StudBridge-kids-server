@@ -1,0 +1,102 @@
+const paymentService = require("../services/payment.service");
+const paymentRepository = require("../repositories/payment.repository");
+const { initiatePaymentSchema } = require("../validators/payment.validator");
+
+// POST /api/payment/initiate
+// Student initiates a payment — must be logged in
+const initiatePayment = async (req, res, next) => {
+  try {
+    const parsed = initiatePaymentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: parsed.error.errors[0]?.message || "Invalid request",
+      });
+    }
+
+    const user_id = req.user.id;
+    const { plan, mobile } = parsed.data;
+    const user_mobile = mobile || req.user.parent_phone || "";
+
+    const result = await paymentService.initiatePayment(
+      user_id,
+      plan,
+      user_mobile,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// GET /api/payment/status/:merchantTransactionId
+// Called after redirect from the PhonePe payment page.
+// verifyPayment() checks PhonePe (source of truth) and activates if COMPLETED.
+const checkPaymentStatus = async (req, res, next) => {
+  try {
+    const { merchantTransactionId } = req.params;
+
+    if (!merchantTransactionId) {
+      return res.status(400).json({ error: "Transaction ID is required" });
+    }
+
+    const result = await paymentService.verifyPayment(merchantTransactionId);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: "Payment successful! Your plan is now active.",
+        data: result,
+      });
+    } else {
+      res.status(200).json({
+        success: false,
+        message: `Payment ${result.state ? result.state.toLowerCase() : "not completed"}.`,
+        data: result,
+      });
+    }
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/payment/callback
+// PhonePe server-to-server webhook — NO auth middleware on this route.
+// Authenticity is verified inside the service via the SDK's validateCallback().
+const handleCallback = async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || req.headers.Authorization;
+    const bodyString =
+      typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+
+    await paymentService.handleCallback(authHeader, bodyString);
+    // PhonePe expects a 200 response to stop retrying
+    res.status(200).json({ success: true });
+  } catch (err) {
+    // Still return 200 to PhonePe to acknowledge receipt and stop retries
+    console.error("Callback processing error:", err.message);
+    res.status(200).json({ success: false });
+  }
+};
+
+// GET /api/payment/my-subscription
+// Student checks their current subscription
+const getMySubscription = async (req, res, next) => {
+  try {
+    const user_id = req.user.id;
+    const subscription = await paymentRepository.getUserSubscription(user_id);
+    res.status(200).json({ data: subscription });
+  } catch (err) {
+    next(err);
+  }
+};
+
+module.exports = {
+  initiatePayment,
+  checkPaymentStatus,
+  handleCallback,
+  getMySubscription,
+};
