@@ -61,17 +61,7 @@ module.exports = (err, req, res, next) => {
     return res.status(err.status).json({ error: err.message });
   }
 
-  // Known manual errors thrown in services without status
-  // If the error message is a short clean string it is safe to show
-  if (
-    err.message &&
-    err.message.length < 150 &&
-    !err.message.includes("at Object")
-  ) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  // Unknown server error — hide internal details
+  // Unknown server error — hide internal details (SDK, DB, stack traces, etc.)
   console.error("Unexpected error stack:", err.stack);
   return res.status(500).json({
     error: "An unexpected error occurred. Please try again later.",

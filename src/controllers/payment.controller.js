@@ -28,7 +28,10 @@ const initiatePayment = async (req, res, next) => {
       data: result,
     });
   } catch (err) {
-    next(err);
+    console.error("Payment initiation error:", err.message, err.stack);
+    return res.status(503).json({
+      error: "Unable to process payments right now. Please try again later.",
+    });
   }
 };
 
@@ -59,7 +62,10 @@ const checkPaymentStatus = async (req, res, next) => {
       });
     }
   } catch (err) {
-    next(err);
+    console.error("Payment status check error:", err.message, err.stack);
+    return res.status(503).json({
+      error: "Unable to verify payment right now. Please try again later.",
+    });
   }
 };
 
