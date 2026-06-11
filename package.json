@@ -34,5 +34,8 @@
   },
   "overrides": {
     "class-transformer": "0.4.0"
+  },
+  "resolutions": {
+    "class-transformer": "0.4.0"
   }
 }
