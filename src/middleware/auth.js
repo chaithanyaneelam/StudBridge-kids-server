@@ -26,10 +26,6 @@ const authMiddleware = (req, res, next) => {
         .json({ error: "Authentication required. Please provide a token." });
     }
 
-    console.log("=== AUTH DEBUGGING ===");
-    console.log("Token received:", token);
-    console.log("JWT Secret exists:", !!process.env.JWT_SECRET);
-
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
