@@ -6,8 +6,16 @@ const { initiatePaymentSchema } = require("../validators/payment.validator");
 // Student initiates a payment — must be logged in
 const initiatePayment = async (req, res, next) => {
   try {
+    console.log("[PAYMENT_DEBUG] /initiate hit", {
+      body: req.body,
+      userId: req.user && req.user.id,
+    });
+
     const parsed = initiatePaymentSchema.safeParse(req.body);
     if (!parsed.success) {
+      console.error("[PAYMENT_DEBUG] FAIL@body-validation", {
+        errors: parsed.error.errors,
+      });
       return res.status(400).json({
         error: parsed.error.errors[0]?.message || "Invalid request",
       });
@@ -28,9 +36,20 @@ const initiatePayment = async (req, res, next) => {
       data: result,
     });
   } catch (err) {
-    console.error("Payment initiation error:", err.message, err.stack);
-    return res.status(503).json({
-      error: "Unable to process payments right now. Please try again later.",
+    // Log the FULL error so the real failure cause is visible in server logs.
+    console.error("[PAYMENT_DEBUG] /initiate caught error", {
+      message: err.message,
+      name: err.name,
+      status: err.status,
+      code: err.code,
+      httpStatusCode: err.httpStatusCode,
+      data: err.data,
+      stack: err.stack,
+    });
+
+    const status = err.status || 503;
+    return res.status(status).json({
+      error: err.message || "Unable to process payments right now. Please try again later.",
     });
   }
 };

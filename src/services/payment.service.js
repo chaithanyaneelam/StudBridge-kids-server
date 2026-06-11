@@ -29,7 +29,21 @@ let phonePeClient = null;
 const getClient = () => {
   if (phonePeClient) return phonePeClient;
 
+  console.log("[PAYMENT_DEBUG] getClient: building PhonePe client", {
+    hasClientId: Boolean(phonePeConfig.clientId),
+    hasClientSecret: Boolean(phonePeConfig.clientSecret),
+    clientVersion: phonePeConfig.clientVersion,
+    environment: phonePeConfig.environment,
+  });
+
   if (!phonePeConfig.clientId || !phonePeConfig.clientSecret) {
+    console.error(
+      "[PAYMENT_DEBUG] getClient FAILED: PhonePe credentials missing.",
+      {
+        clientIdPresent: Boolean(phonePeConfig.clientId),
+        clientSecretPresent: Boolean(phonePeConfig.clientSecret),
+      },
+    );
     const err = new Error("PhonePe is not configured on the server.");
     err.status = 500;
     throw err;
@@ -38,12 +52,25 @@ const getClient = () => {
   const env =
     phonePeConfig.environment === "PRODUCTION" ? Env.PRODUCTION : Env.SANDBOX;
 
-  phonePeClient = StandardCheckoutClient.getInstance(
-    phonePeConfig.clientId,
-    phonePeConfig.clientSecret,
-    phonePeConfig.clientVersion,
-    env,
-  );
+  try {
+    phonePeClient = StandardCheckoutClient.getInstance(
+      phonePeConfig.clientId,
+      phonePeConfig.clientSecret,
+      phonePeConfig.clientVersion,
+      env,
+    );
+    console.log("[PAYMENT_DEBUG] getClient: SDK client initialized OK");
+  } catch (sdkInitErr) {
+    console.error("[PAYMENT_DEBUG] getClient FAILED: SDK getInstance threw", {
+      message: sdkInitErr.message,
+      name: sdkInitErr.name,
+      code: sdkInitErr.code,
+      httpStatusCode: sdkInitErr.httpStatusCode,
+      data: sdkInitErr.data,
+      stack: sdkInitErr.stack,
+    });
+    throw sdkInitErr;
+  }
   return phonePeClient;
 };
 
@@ -60,7 +87,18 @@ const generateMerchantTransactionId = (user_id) => {
  * and returns that URL for the frontend to redirect the user to.
  */
 const initiatePayment = async (user_id, plan, user_mobile) => {
+  console.log("[PAYMENT_DEBUG] initiatePayment START", {
+    user_id,
+    plan,
+    user_mobile,
+  });
+
+  // --- Case 1: invalid plan ---
   if (!PLAN_AMOUNTS[plan]) {
+    console.error("[PAYMENT_DEBUG] FAIL@plan-validation: unknown plan", {
+      plan,
+      validPlans: Object.keys(PLAN_AMOUNTS),
+    });
     const err = new Error(
       "Invalid plan selected. Must be monthly, 6month, or yearly.",
     );
@@ -68,29 +106,94 @@ const initiatePayment = async (user_id, plan, user_mobile) => {
     throw err;
   }
 
-  const client = getClient();
+  // --- Case 2: SDK client init (credentials / env) ---
+  let client;
+  try {
+    client = getClient();
+  } catch (clientErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@getClient", {
+      message: clientErr.message,
+    });
+    throw clientErr;
+  }
+
   const amount = PLAN_AMOUNTS[plan]; // paise
   const merchantTransactionId = generateMerchantTransactionId(user_id);
-
-  // Create pending record before calling PhonePe so we always have a trace
-  await paymentRepository.createPaymentRecord(
-    user_id,
-    plan,
-    amount / 100, // store in rupees
+  console.log("[PAYMENT_DEBUG] prepared order", {
+    amount,
     merchantTransactionId,
-  );
+  });
+
+  // --- Case 3: DB insert of pending record ---
+  try {
+    await paymentRepository.createPaymentRecord(
+      user_id,
+      plan,
+      amount / 100, // store in rupees
+      merchantTransactionId,
+    );
+    console.log("[PAYMENT_DEBUG] DB pending record created OK");
+  } catch (dbErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@createPaymentRecord (DB insert)", {
+      message: dbErr.message,
+      code: dbErr.code, // pg error code, e.g. 23503 FK, 42703 undefined column
+      detail: dbErr.detail,
+      table: dbErr.table,
+      column: dbErr.column,
+      constraint: dbErr.constraint,
+    });
+    throw dbErr;
+  }
 
   // Where PhonePe sends the user back after payment; include our txn id
   const redirectUrl = `${phonePeConfig.redirectUrl}?txnId=${merchantTransactionId}`;
+  console.log("[PAYMENT_DEBUG] redirectUrl built", { redirectUrl });
 
-  // Build the v2 pay request — merchantOrderId IS our merchantTransactionId
-  const request = StandardCheckoutPayRequest.builder()
-    .merchantOrderId(merchantTransactionId)
-    .amount(amount)
-    .redirectUrl(redirectUrl)
-    .build();
+  // --- Case 4: build the v2 pay request ---
+  let request;
+  try {
+    request = StandardCheckoutPayRequest.builder()
+      .merchantOrderId(merchantTransactionId)
+      .amount(amount)
+      .redirectUrl(redirectUrl)
+      .build();
+    console.log("[PAYMENT_DEBUG] pay request built OK");
+  } catch (buildErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@buildRequest", {
+      message: buildErr.message,
+      stack: buildErr.stack,
+    });
+    throw buildErr;
+  }
 
-  const response = await client.pay(request);
+  // --- Case 5: PhonePe network/auth call (most likely failure point) ---
+  let response;
+  try {
+    response = await client.pay(request);
+    console.log("[PAYMENT_DEBUG] client.pay() OK", {
+      hasRedirectUrl: Boolean(response && response.redirectUrl),
+      response,
+    });
+  } catch (payErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@client.pay (PhonePe API call)", {
+      message: payErr.message,
+      name: payErr.name,
+      code: payErr.code,
+      httpStatusCode: payErr.httpStatusCode,
+      data: payErr.data,
+      responseData:
+        payErr.response && payErr.response.data ? payErr.response.data : undefined,
+      stack: payErr.stack,
+    });
+    throw payErr;
+  }
+
+  if (!response || !response.redirectUrl) {
+    console.error(
+      "[PAYMENT_DEBUG] FAIL@response: PhonePe returned no redirectUrl",
+      { response },
+    );
+  }
 
   return {
     merchantTransactionId,
