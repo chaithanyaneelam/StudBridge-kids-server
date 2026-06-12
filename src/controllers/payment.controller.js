@@ -1,6 +1,9 @@
 const paymentService = require("../services/payment.service");
 const paymentRepository = require("../repositories/payment.repository");
-const { initiatePaymentSchema } = require("../validators/payment.validator");
+const {
+  initiatePaymentSchema,
+  initiateUpiIntentSchema,
+} = require("../validators/payment.validator");
 
 // POST /api/payment/initiate
 // Student initiates a payment — must be logged in
@@ -50,6 +53,61 @@ const initiatePayment = async (req, res, next) => {
     const status = err.status || 503;
     return res.status(status).json({
       error: err.message || "Unable to process payments right now. Please try again later.",
+    });
+  }
+};
+
+// POST /api/payment/initiate-upi
+// Student initiates a UPI Intent payment (mobile-first) — must be logged in.
+// Returns an intentUrl the frontend opens to launch the user's UPI app, plus
+// qrData as a fallback. No redirect: the frontend polls /status afterwards.
+const initiateUpiIntent = async (req, res, next) => {
+  try {
+    console.log("[PAYMENT_DEBUG] /initiate-upi hit", {
+      body: req.body,
+      userId: req.user && req.user.id,
+    });
+
+    const parsed = initiateUpiIntentSchema.safeParse(req.body);
+    if (!parsed.success) {
+      console.error("[PAYMENT_DEBUG] FAIL@upi-body-validation", {
+        errors: parsed.error.errors,
+      });
+      return res.status(400).json({
+        error: parsed.error.errors[0]?.message || "Invalid request",
+      });
+    }
+
+    const user_id = req.user.id;
+    const { plan, deviceOS, targetApp } = parsed.data;
+
+    const result = await paymentService.initiateUpiIntentPayment(
+      user_id,
+      plan,
+      deviceOS,
+      targetApp,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    console.error("[PAYMENT_DEBUG] /initiate-upi caught error", {
+      message: err.message,
+      name: err.name,
+      status: err.status,
+      code: err.code,
+      httpStatusCode: err.httpStatusCode,
+      data: err.data,
+      stack: err.stack,
+    });
+
+    const status = err.status || 503;
+    return res.status(status).json({
+      error:
+        err.message ||
+        "Unable to process payments right now. Please try again later.",
     });
   }
 };
@@ -121,6 +179,7 @@ const getMySubscription = async (req, res, next) => {
 
 module.exports = {
   initiatePayment,
+  initiateUpiIntent,
   checkPaymentStatus,
   handleCallback,
   getMySubscription,

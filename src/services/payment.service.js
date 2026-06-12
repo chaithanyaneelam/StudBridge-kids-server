@@ -1,7 +1,9 @@
 const {
   StandardCheckoutClient,
+  CustomCheckoutClient,
   Env,
   StandardCheckoutPayRequest,
+  CustomCheckoutPayRequest,
 } = require("@phonepe-pg/pg-sdk-node");
 const paymentRepository = require("../repositories/payment.repository");
 const phonePeConfig = require("../config/phonepe");
@@ -72,6 +74,38 @@ const getClient = () => {
     throw sdkInitErr;
   }
   return phonePeClient;
+};
+
+/**
+ * Lazily build the PhonePe Custom Checkout client (singleton).
+ * Custom Checkout is required for the UPI Intent flow — it returns an
+ * `intentUrl` that a mobile device opens directly into the user's UPI app,
+ * instead of redirecting to PhonePe's hosted checkout page.
+ *
+ * NOTE: the Custom Checkout / UPI PG APIs must be enabled by PhonePe for the
+ * merchant account. If they are not, client.pay() will reject with an
+ * authorization error — that is a dashboard/onboarding step, not a code bug.
+ */
+let phonePeCustomClient = null;
+const getCustomClient = () => {
+  if (phonePeCustomClient) return phonePeCustomClient;
+
+  if (!phonePeConfig.clientId || !phonePeConfig.clientSecret) {
+    const err = new Error("PhonePe is not configured on the server.");
+    err.status = 500;
+    throw err;
+  }
+
+  const env =
+    phonePeConfig.environment === "PRODUCTION" ? Env.PRODUCTION : Env.SANDBOX;
+
+  phonePeCustomClient = CustomCheckoutClient.getInstance(
+    phonePeConfig.clientId,
+    phonePeConfig.clientSecret,
+    phonePeConfig.clientVersion,
+    env,
+  );
+  return phonePeCustomClient;
 };
 
 // Generate unique merchant transaction (order) id
@@ -205,6 +239,113 @@ const initiatePayment = async (user_id, plan, user_mobile) => {
 };
 
 /**
+ * Initiate a UPI Intent payment via PhonePe Custom Checkout v2.
+ *
+ * Unlike Standard Checkout (which redirects to PhonePe's hosted page), this
+ * returns an `intentUrl` (e.g. `upi://pay?...`). On a real mobile browser the
+ * frontend navigates to that URL, which opens the UPI app chooser directly —
+ * giving UPI top priority on mobile. A `qrData` string is also returned as a
+ * desktop/scan fallback. There is no redirect: after paying, the frontend
+ * polls GET /status/:merchantTransactionId (and the webhook confirms too).
+ *
+ * @param {number|string} user_id
+ * @param {string} plan
+ * @param {string} [deviceOS] - "ANDROID" | "IOS" (helps PhonePe shape intent)
+ * @param {string} [targetApp] - optional UPI app package to target a single app
+ */
+const initiateUpiIntentPayment = async (user_id, plan, deviceOS, targetApp) => {
+  console.log("[PAYMENT_DEBUG] initiateUpiIntentPayment START", {
+    user_id,
+    plan,
+    deviceOS,
+    targetApp,
+  });
+
+  if (!PLAN_AMOUNTS[plan]) {
+    const err = new Error(
+      "Invalid plan selected. Must be monthly, 6month, or yearly.",
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  let client;
+  try {
+    client = getCustomClient();
+  } catch (clientErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@getCustomClient", {
+      message: clientErr.message,
+    });
+    throw clientErr;
+  }
+
+  const amount = PLAN_AMOUNTS[plan]; // paise
+  const merchantTransactionId = generateMerchantTransactionId(user_id);
+
+  try {
+    await paymentRepository.createPaymentRecord(
+      user_id,
+      plan,
+      amount / 100, // store in rupees
+      merchantTransactionId,
+    );
+    console.log("[PAYMENT_DEBUG] UPI intent: DB pending record created OK");
+  } catch (dbErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@createPaymentRecord (UPI intent)", {
+      message: dbErr.message,
+      code: dbErr.code,
+      detail: dbErr.detail,
+    });
+    throw dbErr;
+  }
+
+  let request;
+  try {
+    const builder = CustomCheckoutPayRequest.UpiIntentPayRequestBuilder()
+      .merchantOrderId(merchantTransactionId)
+      .amount(amount);
+    if (deviceOS) builder.deviceOS(deviceOS);
+    if (targetApp) builder.targetApp(targetApp);
+    request = builder.build();
+    console.log("[PAYMENT_DEBUG] UPI intent pay request built OK");
+  } catch (buildErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@buildUpiIntentRequest", {
+      message: buildErr.message,
+      stack: buildErr.stack,
+    });
+    throw buildErr;
+  }
+
+  let response;
+  try {
+    response = await client.pay(request);
+    console.log("[PAYMENT_DEBUG] UPI intent client.pay() OK", {
+      hasIntentUrl: Boolean(response && response.intentUrl),
+      hasQr: Boolean(response && response.qrData),
+      state: response && response.state,
+    });
+  } catch (payErr) {
+    console.error("[PAYMENT_DEBUG] FAIL@client.pay (UPI intent)", {
+      message: payErr.message,
+      name: payErr.name,
+      code: payErr.code,
+      httpStatusCode: payErr.httpStatusCode,
+      data: payErr.data,
+    });
+    throw payErr;
+  }
+
+  return {
+    merchantTransactionId,
+    intentUrl: response.intentUrl,
+    qrData: response.qrData,
+    amount: amount / 100,
+    plan,
+    planName: PLAN_NAMES[plan],
+  };
+};
+
+/**
  * Verify payment status by querying PhonePe (source of truth) and, if the
  * order is COMPLETED, activate the subscription. Idempotent: safe to call
  * from both the post-redirect status check and the webhook.
@@ -300,6 +441,7 @@ const handleCallback = async (authHeader, bodyString) => {
 
 module.exports = {
   initiatePayment,
+  initiateUpiIntentPayment,
   verifyPayment,
   handleCallback,
   PLAN_AMOUNTS,

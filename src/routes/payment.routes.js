@@ -5,8 +5,9 @@ const auth = require("../middleware/auth");
 const { apiLimiter, authLimiter } = require("../middleware/rateLimiter");
 
 /**
- * Payment Routes — PhonePe Standard Checkout v2
- * POST /initiate                        ← student starts a payment (auth)
+ * Payment Routes — PhonePe Checkout v2
+ * POST /initiate                        ← hosted Standard Checkout (auth)
+ * POST /initiate-upi                    ← UPI Intent, mobile-first (auth)
  * GET  /status/:merchantTransactionId   ← check status after redirect (auth)
  * POST /callback                        ← PhonePe server-to-server webhook (no auth)
  * GET  /my-subscription                 ← student views their subscription (auth)
@@ -14,6 +15,14 @@ const { apiLimiter, authLimiter } = require("../middleware/rateLimiter");
 
 // Student initiates payment — must be logged in
 router.post("/initiate", auth, authLimiter, paymentController.initiatePayment);
+
+// Student initiates a UPI Intent payment (mobile-first) — must be logged in
+router.post(
+  "/initiate-upi",
+  auth,
+  authLimiter,
+  paymentController.initiateUpiIntent,
+);
 
 // Check payment status after redirect — must be logged in
 router.get(
