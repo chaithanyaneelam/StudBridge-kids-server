@@ -10,10 +10,11 @@ const topicOpened = async (req, res, next) => {
 
     const user_id = req.user.id;
 
-    // Record topic open in database
+    // Record topic open in database (role gates the free-tier daily limit)
     const progress = await progressService.recordTopicOpen(
       user_id,
       validatedData.topic_id,
+      req.user.role,
     );
 
     // Return success response
@@ -22,7 +23,16 @@ const topicOpened = async (req, res, next) => {
       data: progress,
     });
   } catch (error) {
-    // Pass errors to global error handler
+    // Free-tier daily limit reached — return a structured 403 the frontend can
+    // act on (lock + upgrade prompt) without leaning on the generic handler.
+    if (error.code === "PLAY_LIMIT_REACHED") {
+      return res.status(403).json({
+        error: error.message,
+        code: error.code,
+        resets_at: error.resets_at,
+      });
+    }
+    // Pass other errors to global error handler
     next(error);
   }
 };
@@ -55,6 +65,24 @@ const practiceCompleted = async (req, res, next) => {
 };
 
 /**
+ * Get the logged-in student's play-access status (free/paid, locked, resets_at)
+ * so the frontend can render all games with lock overlays for free users.
+ */
+const getPlayAccess = async (req, res, next) => {
+  try {
+    const user_id = req.user.id;
+    const status = await progressService.getPlayAccess(user_id, req.user.role);
+
+    res.status(200).json({
+      message: "Play access retrieved",
+      data: status,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Get all progress for logged-in student
  * Gets user_id from JWT, calls service
  */
@@ -80,5 +108,6 @@ const getMyProgress = async (req, res, next) => {
 module.exports = {
   topicOpened,
   practiceCompleted,
+  getPlayAccess,
   getMyProgress,
 };

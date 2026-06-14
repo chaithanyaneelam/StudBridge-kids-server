@@ -85,50 +85,100 @@ const getTeachersBySchool = async (school_id) => {
 };
 
 /**
- * Bulk create students for a school
+ * Bulk create students for a school.
+ *
+ * School-uploaded students are provisioned as paid for one year: each user row
+ * gets plan = 'paid' and plan_expiry = today + 12 months, and a matching
+ * subscriptions row is created with the 'yearly' tier and the same 12-month
+ * term. The users insert and the subscriptions insert run in a single
+ * transaction so a partial failure creates no students without a subscription.
+ *
  * @param {Array} students - Array of student objects with all required fields
- * @returns {Promise<number>} Count of created students
+ * @returns {Promise<Array<number>>} IDs of created students
  */
 const bulkCreateStudents = async (students) => {
   if (!students || students.length === 0) {
-    return 0;
+    return [];
   }
 
-  // Build multi-value INSERT query
-  const values = [];
-  const placeholders = [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  students.forEach((student, index) => {
-    const offset = index * 11; // 11 values per student
-    placeholders.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11})`,
-    );
-    values.push(
-      student.fullname,
-      student.email || null,
-      student.password_hash,
-      student.school_id,
-      student.class_id,
-      student.board_id,
-      student.school_reg_number,
-      student.section,
-      student.requires_password_reset,
-      student.role || "student",
-      student.parent_phone || null,
-    );
-  });
+    // 1. Insert users with paid status + 12-month expiry
+    const userValues = [];
+    const userPlaceholders = [];
 
-  const query = `
-    INSERT INTO users (
-      fullname, email, password_hash, school_id, class_id, board_id, 
-      school_reg_number, section, requires_password_reset, role, parent_phone
-    )
-    VALUES ${placeholders.join(", ")}
-    RETURNING id;
-  `;
+    students.forEach((student, index) => {
+      const offset = index * 11; // 11 bound values per student
+      // plan ('paid') and plan_expiry (today + 12 months) are constants
+      userPlaceholders.push(
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, 'paid', CURRENT_DATE + INTERVAL '12 months')`,
+      );
+      userValues.push(
+        student.fullname,
+        student.email || null,
+        student.password_hash,
+        student.school_id,
+        student.class_id,
+        student.board_id,
+        student.school_reg_number,
+        student.section,
+        student.requires_password_reset,
+        student.role || "student",
+        student.parent_phone || null,
+      );
+    });
 
-  const result = await pool.query(query, values);
-  return result.rows.length;
+    const userQuery = `
+      INSERT INTO users (
+        fullname, email, password_hash, school_id, class_id, board_id,
+        school_reg_number, section, requires_password_reset, role, parent_phone,
+        plan, plan_expiry
+      )
+      VALUES ${userPlaceholders.join(", ")}
+      RETURNING id, school_id, school_reg_number;
+    `;
+
+    const userResult = await client.query(userQuery, userValues);
+    const createdUsers = userResult.rows;
+
+    // 2. Insert a yearly subscription row per created student
+    const subValues = [];
+    const subPlaceholders = [];
+    const grantedAt = Date.now();
+
+    createdUsers.forEach((user, index) => {
+      const offset = index * 4; // 4 bound values per subscription
+      subPlaceholders.push(
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, CURRENT_DATE, CURRENT_DATE + INTERVAL '12 months')`,
+      );
+      subValues.push(
+        user.id,
+        "yearly",
+        0, // school-sponsored grant — no payment amount
+        `ADMIN_${user.school_id}_${user.school_reg_number}_${grantedAt}`,
+      );
+    });
+
+    const subQuery = `
+      INSERT INTO subscriptions (
+        user_id, plan, amount, razorpay_id, start_date, expiry_date
+      )
+      VALUES ${subPlaceholders.join(", ")};
+    `;
+
+    await client.query(subQuery, subValues);
+
+    await client.query("COMMIT");
+
+    return createdUsers.map((user) => user.id);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 };
 
 /**

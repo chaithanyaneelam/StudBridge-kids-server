@@ -93,6 +93,34 @@ const findById = async (id) => {
 };
 
 /**
+ * Get a user's plan access info, with paid-vs-free computed in SQL.
+ * is_paid is true only for a non-empty, non-'free' plan whose plan_expiry is
+ * today or later — keeping the paid/expiry boundary on the same server-date
+ * clock (CURRENT_DATE) as the daily play reset.
+ * @param {number} user_id - User ID
+ * @returns {Promise<{plan: string|null, plan_expiry: (Date|null), is_paid: boolean}|null>}
+ */
+const getAccessInfo = async (user_id) => {
+  const query = `
+    SELECT
+      plan,
+      plan_expiry,
+      (
+        plan IS NOT NULL
+        AND plan <> ''
+        AND plan <> 'free'
+        AND plan_expiry IS NOT NULL
+        AND plan_expiry >= CURRENT_DATE
+      ) AS is_paid
+    FROM users
+    WHERE id = $1
+    LIMIT 1
+  `;
+  const result = await pool.query(query, [user_id]);
+  return result.rows[0] || null;
+};
+
+/**
  * Update password reset flag for user
  * @param {number} id - User ID
  * @returns {Promise<Object>} Updated user object
@@ -122,6 +150,7 @@ module.exports = {
   findByRegNumber,
   createUser,
   findById,
+  getAccessInfo,
   updatePasswordResetFlag,
   updatePassword,
 };

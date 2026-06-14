@@ -123,8 +123,9 @@ const bulkCreateStudents = async (data) => {
       parent_phone: student.parent_phone || null,
     }));
 
-    // Call repository to bulk create students
-    const count = await adminRepository.bulkCreateStudents(mappedStudents);
+    // Call repository to bulk create students (provisioned as paid for 1 year)
+    const createdIds = await adminRepository.bulkCreateStudents(mappedStudents);
+    const count = createdIds.length;
 
     return {
       count,
